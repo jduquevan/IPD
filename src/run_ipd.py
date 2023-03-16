@@ -7,9 +7,9 @@ import numpy as np
 
 from omegaconf import DictConfig, OmegaConf
 
-from agents import DifferentiableRLAgent
-from algos import run_differentiable_rl
-from ipd import IPD
+from .agents import DifferentiableRLAgent
+from .algos import run_differentiable_rl
+from .ipd import IPD
 
 N_ACTIONS = 2
 

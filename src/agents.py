@@ -6,8 +6,8 @@ import numpy as np
 
 from functools import reduce
 
-from ipd import IPD
-from models import DRLActor
+from .ipd import IPD
+from .models import DRLActor
 
 class BaseAgent():
     def __init__(self,
@@ -55,7 +55,7 @@ class DifferentiableRLAgent(BaseAgent):
                            device=device,
                            n_actions=n_actions,
                            obs_shape=obs_shape)
-
+        self.cum_steps = 0
         self.steps_reset = steps_reset
         self.num_rollouts = num_rollouts
         self.rollout_len = rollout_len
@@ -103,10 +103,13 @@ class DifferentiableRLAgent(BaseAgent):
 
     def optimize_model(self, agent):
 
+        self.cum_steps = self.cum_steps + 1
         estimated_rewards = []
 
         # Monte-carlo rollouts TODO: Implement parallel rollouts
         for i in range(self.num_rollouts):
+
+            steps = self.cum_steps
             t_rewards = []
             log_probs = []
             obs, last_actions = self.transition
@@ -134,12 +137,16 @@ class DifferentiableRLAgent(BaseAgent):
                 obs, r1, r2, _, _, _  = self.model.step([action_a, action_b])
                 t_rewards.append(r1)
                 last_actions = torch.cat([action_a, action_b])
+                if steps % self.steps_reset == 0:
+                    last_actions = torch.tensor([-1, -1, -1, -1], device=self.device)
+                steps = steps + 1
+
             reward_t = torch.sum(torch.cat(t_rewards, dim=0))
             sum_log_probs = torch.sum(torch.cat(log_probs, dim=0))
 
             # Reinforce estimator
             estimated_rewards.append((reward_t.detach() * sum_log_probs).unsqueeze(dim=0))
-
+            
         game_value = torch.sum(torch.cat(estimated_rewards, dim=0))/self.num_rollouts
 
         self.optimizer.zero_grad()

@@ -7,7 +7,7 @@ import numpy as np
 from itertools import count
 from typing import Any, Dict, Optional
 
-from utils import WandbLogger
+from .utils import WandbLogger
 
 def run_differentiable_rl(env, 
                           obs, 
