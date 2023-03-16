@@ -1,0 +1,23 @@
+hydra:
+  output_subdir: null
+  run:
+    dir: /network/scratch/j/juan.duque/hydra/
+
+seed: 1
+agent_type: "differentiable_rl"
+reward_window: 10
+num_episodes: 1000000
+base_agent:
+  gamma: 0.99
+  hidden_size: 64
+  num_layers: 0
+  opt_type: "adam"
+drl_agent:
+  steps_reset: 10
+  num_rollouts: 10
+  rollout_len: 10
+  communication_len: 10
+optim:
+  lr: 0.00001
+  momentum: 0.9
+  weight_decay: 1e-5
