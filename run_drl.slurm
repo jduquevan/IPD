@@ -37,4 +37,4 @@ conda activate cogames
 
 python -m src.run_ipd seed=${1} drl_agent.steps_reset=${2} optim.lr=${3}
 
-#python -m src.run seed=1 agent_type="nash_ac" use_history=True base_agent.use_actions=True base_agent.model_type="lstm" base_agent.history_len=2 nash_ac_agent.temperature=2
+#python -m src.run_ipd seed=1 drl_agent.steps_reset=10 optim.lr=0.000001

@@ -11,7 +11,7 @@ base_agent:
   gamma: 0.99
   hidden_size: 64
   num_layers: 0
-  opt_type: "adam"
+  opt_type: "eg"
 drl_agent:
   steps_reset: 10
   num_rollouts: 10
@@ -21,3 +21,5 @@ optim:
   lr: 0.00001
   momentum: 0.9
   weight_decay: 1e-5
+  beta_1: 0.9
+  beta_2: 0.999

@@ -8,6 +8,7 @@ from functools import reduce
 
 from .ipd import IPD
 from .models import DRLActor
+from .optimizers import ExtraAdam
 
 class BaseAgent():
     def __init__(self,
@@ -81,6 +82,11 @@ class DifferentiableRLAgent(BaseAgent):
                                         lr=optim_config["lr"],
                                         weight_decay=optim_config["weight_decay"],
                                         maximize=True)
+        elif self.opt_type.lower() == "eg":
+            self.optimizer = ExtraAdam(self.actor.parameters(), 
+                                       lr=optim_config["lr"],
+                                       betas=(optim_config["beta_1"], optim_config["beta_2"]),
+                                       weight_decay=optim_config["weight_decay"])
 
     def select_action(self, state, agent=None):
         self.steps_done += 1
@@ -101,7 +107,7 @@ class DifferentiableRLAgent(BaseAgent):
             j_0, dist_b = agent.actor(state, dist_a, j_0)
         return dist_a, dist_b
 
-    def optimize_model(self, agent):
+    def compute_value(self, agent):
 
         self.cum_steps = self.cum_steps + 1
         estimated_rewards = []
@@ -149,9 +155,5 @@ class DifferentiableRLAgent(BaseAgent):
             
         game_value = torch.sum(torch.cat(estimated_rewards, dim=0))/self.num_rollouts
 
-        self.optimizer.zero_grad()
-        game_value.backward()
-        self.optimizer.step()
-
-        return game_value.detach()
+        return game_value
 
