@@ -126,7 +126,8 @@ class VIPAgent(BaseAgent):
                 if communication:
                     dist_a, dist_b = self.unroll_policies(state, h_0, dist_a, agent)
                 else:
-                    j_0, dist_b = agent.actor(state)
+                    j_0, dist_b = agent.actor(state, dist_a)
+                    h_0, dist_a = self.actor(state, dist_b)
                 index_a = torch.tensor([np.random.choice(self.n_actions, p=dist_a.cpu().detach().numpy())],
                                        requires_grad=False,
                                        device=self.device)
@@ -140,6 +141,8 @@ class VIPAgent(BaseAgent):
 
                 a_t_prob = torch.take(dist_a, index_a)
                 b_t_prob = torch.take(dist_b, index_b)
+                if not communication:
+                    b_t_prob = b_t_prob.detach()
                 log_probs.append(torch.log(a_t_prob))
                 log_probs.append(torch.log(b_t_prob))
 

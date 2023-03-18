@@ -68,7 +68,7 @@ def evaluate_agent(agent, evaluation_steps, env, device, pi):
         last_actions = torch.cat([action_1, pi])
 
         scores.append(r1.detach().cpu().numpy().item())
-    score = scores[1:]/(evaluation_steps-1)
+    score = sum(scores[1:])/(evaluation_steps-1)
         
     return score
 
