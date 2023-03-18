@@ -40,7 +40,7 @@ class BaseAgent():
         self.obs_history = self.obs_history[0:self.history_len]
 
 
-class DifferentiableRLAgent(BaseAgent):
+class VIPAgent(BaseAgent):
     def __init__(self,
                  config,
                  optim_config,
@@ -88,9 +88,9 @@ class DifferentiableRLAgent(BaseAgent):
                                        betas=(optim_config["beta_1"], optim_config["beta_2"]),
                                        weight_decay=optim_config["weight_decay"])
 
-    def select_action(self, state, agent=None):
+    def select_action(self, state, agent=None, dist_b=None):
         self.steps_done += 1
-        h_0, dist_a = self.actor(state)
+        h_0, dist_a = self.actor(state, dist_b)
         if not agent is None:
             dist_a, dist_b = self.unroll_policies(state, h_0, dist_a, agent)
         index = torch.tensor([np.random.choice(self.n_actions, p=dist_a.cpu().detach().numpy())],
@@ -107,7 +107,7 @@ class DifferentiableRLAgent(BaseAgent):
             j_0, dist_b = agent.actor(state, dist_a, j_0)
         return dist_a, dist_b
 
-    def compute_value(self, agent):
+    def compute_value(self, agent, communication=True):
 
         self.cum_steps = self.cum_steps + 1
         estimated_rewards = []
@@ -123,13 +123,16 @@ class DifferentiableRLAgent(BaseAgent):
 
             for j in range(self.rollout_len):
                 h_0, dist_a = self.actor(state)
-                dist_a, dist_b = self.unroll_policies(state, h_0, dist_a, agent)
+                if communication:
+                    dist_a, dist_b = self.unroll_policies(state, h_0, dist_a, agent)
+                else:
+                    j_0, dist_b = agent.actor(state)
                 index_a = torch.tensor([np.random.choice(self.n_actions, p=dist_a.cpu().detach().numpy())],
-                              requires_grad=False,
-                              device=self.device)
+                                       requires_grad=False,
+                                       device=self.device)
                 index_b = torch.tensor([np.random.choice(self.n_actions, p=dist_b.cpu().detach().numpy())],
-                              requires_grad=False,
-                              device=self.device)
+                                       requires_grad=False,
+                                       device=self.device)
                 action_a = torch.zeros(self.n_actions).to(self.device)
                 action_b = torch.zeros(self.n_actions).to(self.device)
                 action_a = action_a.scatter(0, index_a, 1)
