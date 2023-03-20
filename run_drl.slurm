@@ -37,4 +37,4 @@ conda activate cogames
 
 python -m src.run_ipd seed=${1} drl_agent.steps_reset=${2} optim.lr=${3}
 
-#python -m src.run_ipd seed=1 drl_agent.steps_reset=10 optim.lr=0.001
+#python -m src.run_ipd seed=1 drl_agent.steps_reset=10 optim.lr=0.0001

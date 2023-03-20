@@ -6,6 +6,7 @@ import numpy as np
 
 from functools import reduce
 
+from .algos import get_reset_history
 from .ipd import IPD
 from .models import DRLActor
 from .optimizers import ExtraAdam
@@ -50,7 +51,9 @@ class VIPAgent(BaseAgent):
                  communication_len,
                  device,
                  n_actions,
-                 obs_shape):
+                 history_size,
+                 obs_shape,
+                 model):
         BaseAgent.__init__(self,
                            **config, 
                            device=device,
@@ -62,14 +65,15 @@ class VIPAgent(BaseAgent):
         self.rollout_len = rollout_len
         self.communication_len = communication_len
         self.n_actions = n_actions
+        self.history_size = history_size
         self.transition: list = list()
 
-        self.actor = DRLActor(in_size=self.obs_size + 6,
+        self.actor = DRLActor(in_size=self.obs_size + history_size + n_actions,
                               out_size=self.n_actions,
                               device=self.device,
                               hidden_size=self.hidden_size)
         self.actor.to(self.device)
-        self.model = IPD(self.device)
+        self.model = model
 
         if self.opt_type.lower() == "sgd":
             self.optimizer = optim.SGD(self.actor.parameters(), 
@@ -107,7 +111,7 @@ class VIPAgent(BaseAgent):
             j_0, dist_b = agent.actor(state, dist_a, j_0)
         return dist_a, dist_b
 
-    def compute_value(self, agent, communication=True):
+    def compute_value(self, agent, env_type="ipd", communication=True):
 
         self.cum_steps = self.cum_steps + 1
         estimated_rewards = []
@@ -118,8 +122,8 @@ class VIPAgent(BaseAgent):
             steps = self.cum_steps
             t_rewards = []
             log_probs = []
-            obs, last_actions = self.transition
-            state = torch.cat([obs.flatten(), last_actions])
+            obs, history = self.transition
+            state = torch.cat([obs.flatten(), history])
 
             for j in range(self.rollout_len):
                 h_0, dist_a = self.actor(state)
@@ -147,10 +151,14 @@ class VIPAgent(BaseAgent):
                 log_probs.append(torch.log(b_t_prob))
 
                 obs, r1, r2, _, _, _  = self.model.step([action_a, action_b])
+                if env_type == "ipd":
+                    history = torch.cat([action_a, action_b])
+                elif env_type == "cg":
+                    history = torch.cat([self.model.j1, self.model.j2])
+
                 t_rewards.append(r1)
-                last_actions = torch.cat([action_a, action_b])
                 if steps % self.steps_reset == 0:
-                    last_actions = torch.tensor([-1, -1, -1, -1], device=self.device)
+                    history = get_reset_history(env_type, self.device)
                 steps = steps + 1
 
             reward_t = torch.sum(torch.cat(t_rewards, dim=0))

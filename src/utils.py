@@ -1,8 +1,9 @@
 import wandb
 
 class WandbLogger():
-    def __init__(self, reward_window):
+    def __init__(self, reward_window, env_type):
         self.reward_window = reward_window
+        self.env_type = env_type
         self.cum_steps = 0
         self.d_score_1 = 0
         self.d_score_2 = 0
@@ -43,14 +44,14 @@ class WandbLogger():
         if c_score_2:
             self.c_score_2 = c_score_2
 
-        if action_1[0].item():
+        if self.env_type == "ipd" and action_1[0].item():
             self.adversity_1.insert(0, 0)
-        else:
+        elif self.env_type == "ipd":
             self.adversity_1.insert(0, 1)
 
-        if action_2[0].item():
+        if self.env_type == "ipd" and action_2[0].item():
             self.adversity_2.insert(0, 0)
-        else:
+        elif self.env_type == "ipd":
             self.adversity_2.insert(0, 1)
 
         self.adversity_1 = self.adversity_1[0:self.reward_window]
@@ -66,12 +67,14 @@ class WandbLogger():
         wandb_info['total_avg_reward'] = (avg_1 + avg_2)/2
         wandb_info['loss_1'] = value_1
         wandb_info['loss_2'] = value_2
-        wandb_info['adversity_1'] = adv_1
-        wandb_info['adversity_2'] = adv_2
         wandb_info['d_score_1'] = d_score_1
         wandb_info['d_score_2'] = d_score_2
         wandb_info['c_score_1'] = c_score_1
         wandb_info['c_score_2'] = c_score_2
+
+        if self.env_type == "ipd":
+            wandb_info['adversity_1'] = adv_1
+            wandb_info['adversity_2'] = adv_2
 
         wandb.log(wandb_info)
         
