@@ -31,3 +31,19 @@ class DRLActor(nn.Module):
         else:
             output, x = self.gru(x.reshape(1, 1, x.shape[0]))
         return output, F.softmax(self.linear(F.relu(x)).flatten())
+
+class HistoryAggregator(nn.Module):
+    def __init__(self, in_size, out_size, device, hidden_size=40, num_layers=1):
+        super(HistoryAggregator, self).__init__()
+        self.in_size = in_size
+        self.out_size = out_size
+        self.device = device
+        self.hidden_size = hidden_size
+        self.num_layers = num_layers
+
+        self.lstm = nn.LSTM(in_size, out_size, num_layers, batch_first = True)
+        self.out_layer = nn.Linear(out_size, out_size)
+
+    def forward(self, x):
+        x, hidden = self.lstm(x)
+        return F.relu(self.out_layer(F.relu(x[:,-1,:])))

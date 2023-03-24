@@ -7,17 +7,19 @@ seed: 1
 agent_type: "vip"
 reward_window: 10
 num_episodes: 1000000
-env: "ipd"
+env: "cg"
 base_agent:
   gamma: 0.99
   hidden_size: 64
   num_layers: 0
   opt_type: "eg"
-drl_agent:
+vip_agent:
   steps_reset: 10
   num_rollouts: 10
   rollout_len: 10
   communication_len: 10
+  representation_size: 16
+  history_len: 2
 optim:
   lr: 0.00001
   momentum: 0.9

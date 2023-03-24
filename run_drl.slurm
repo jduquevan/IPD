@@ -16,7 +16,7 @@
 #SBATCH -n 1 #tasks
 #SBATCH --cpus-per-task=1
 #SBATCH --mem=20G
-#SBATCH --time=0-00:59:00   
+#SBATCH --time=0-05:59:00   
 #SBATCH --gres=gpu:1 
 
 # Turn on mail notification. There are many possible self-explaining values:
@@ -35,6 +35,6 @@ module purge
 eval "$(conda shell.bash hook)"
 conda activate cogames
 
-python -m src.run_ipd seed=${1} drl_agent.steps_reset=${2} optim.lr=${3}
+python -m src.run seed=${1} vip_agent.steps_reset=${2} optim.lr=${3}
 
-#python -m src.run_ipd seed=1 drl_agent.steps_reset=10 optim.lr=0.0001
+#python -m src.run seed=1 vip_agent.steps_reset=10 optim.lr=0.0001

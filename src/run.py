@@ -47,7 +47,7 @@ def main(args: DictConfig):
     if config["agent_type"] == "vip":
         agent_1 = VIPAgent(config["base_agent"],
                            config["optim"],
-                           **config["drl_agent"],
+                           **config["vip_agent"],
                            device=device,
                            n_actions=n_actions,
                            history_size=history_size,
@@ -56,7 +56,7 @@ def main(args: DictConfig):
 
         agent_2 = VIPAgent(config["base_agent"],
                            config["optim"],
-                           **config["drl_agent"],
+                           **config["vip_agent"],
                            device=device,
                            n_actions=n_actions,
                            history_size=history_size,

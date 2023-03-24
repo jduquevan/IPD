@@ -10,7 +10,7 @@ from typing import Any, Dict, Optional
 from .optimizers import ExtraAdam
 from .utils import WandbLogger
 
-def optimize_models(opt_type, opt_1, opt_2, loss_1, loss_2):
+def optimize_models(opt_type, opt_1, opt_2, loss_1, loss_2, t):
     if opt_type == "sgd" or opt_type == "adam":
         opt_1.zero_grad()
         opt_2.zero_grad()
@@ -23,18 +23,21 @@ def optimize_models(opt_type, opt_1, opt_2, loss_1, loss_2):
         loss_2 = -1 * loss_2 
         opt_1.zero_grad()
         opt_2.zero_grad()
-        loss_1.backward()
+        loss_1.backward(retain_graph=True)
         loss_2.backward()
-        opt_1.extrapolation()
-        opt_2.extrapolation()
-        opt_1.step()
-        opt_2.step()
+        if t % 2 == 0:
+            opt_1.extrapolation()
+            opt_2.extrapolation()
+        else:
+            opt_1.step()
+            opt_2.step()
 
-def get_reset_history(env, device):
+def get_reset_history(env, device, agent=None):
     if env == "ipd":
         return torch.tensor([-1, -1, -1, -1], device=device)
     elif env == "cg":
-        return torch.tensor([-1, -1], device=device)
+        agent.reset_history()
+        return agent.aggregate_history()
 
 def evaluate_agents(agent_1, agent_2, evaluation_steps, eval_env, env_type, device):
     # TODO: Implement always cooperate and defect agents for IPD and CG
@@ -104,29 +107,46 @@ def run_vip(env,
 
     for i_episode in range(num_episodes):
         obs, _ = env.reset()
-        history = get_reset_history(env_type, device)
-        for t in count():
-            if t % steps_reset == 0:
-                history = get_reset_history(env_type, device)
-            agent_1.transition = [obs, history]
-            agent_2.transition = [obs, history]
 
-            state = torch.cat([obs.flatten(), history])
-            action_1 = agent_1.select_action(state, agent_2)
-            action_2 = agent_2.select_action(state, agent_1)
+        if env_type == "ipd":
+            history = get_reset_history(env_type, device)
+        elif env_type == "cg":
+            history_1 = get_reset_history(env_type, device, agent_1)
+            history_2 = get_reset_history(env_type, device, agent_2)
+        
+        for t in count():
+            if t % steps_reset == 0 and env_type == "ipd":
+                history = get_reset_history(env_type, device)
+            elif t % steps_reset == 0 and env_type == "cg":
+                history_1 = get_reset_history(env_type, device, agent_1)
+                history_2 = get_reset_history(env_type, device, agent_2)
+
+            if env_type == "ipd":
+                agent_1.transition = [obs, history]
+                agent_2.transition = [obs, history]
+                state = torch.cat([obs.flatten(), history])
+                action_1 = agent_1.select_action(state, agent_2)
+                action_2 = agent_2.select_action(state, agent_1)
+            elif env_type == "cg":
+                agent_1.transition = [obs, history_1, agent_1.history]
+                agent_2.transition = [obs, history_2, agent_2.history]
+                state_1 = torch.cat([obs.flatten(), history_1])
+                state_2 = torch.cat([obs.flatten(), history_2])
+                action_1 = agent_1.select_action(state_1, agent_2, state_b=state_2)
+                action_2 = agent_2.select_action(state_2, agent_1, state_b=state_1)
             
+            last_obs = obs
             obs, r1, r2, _, _, _  = env.step([action_1, action_2])
 
             if env_type == "ipd":
                 history = torch.cat([action_1, action_2])
             elif env_type == "cg":
-                agent_1.model.j1 = env.j1
-                agent_1.model.j2 = env.j2
-                agent_2.model.j1 = env.j1
-                agent_2.model.j2 = env.j2
-                history = torch.cat([env.j1, env.j2])
+                agent_1.update_history(action_1, action_2, last_obs)
+                agent_2.update_history(action_2, action_1, last_obs)
+                history_1 = agent_1.aggregate_history()
+                history_2 = agent_2.aggregate_history()
 
-            if t % 2 == 0:
+            if t % 4 == 0 or t % 4 == 1:
                 value_1 = agent_1.compute_value(agent_2, env_type=env_type)
                 value_2 = agent_2.compute_value(agent_1, env_type=env_type)
             else:
@@ -137,7 +157,8 @@ def run_vip(env,
                             agent_1.optimizer, 
                             agent_2.optimizer,
                             value_1,
-                            value_2)
+                            value_2,
+                            t)
 
             d_1, c_1, d_2, c_2 = None, None, None, None
             if t % evaluate_every == 0 and env_type == "ipd":
