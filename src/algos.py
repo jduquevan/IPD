@@ -5,6 +5,7 @@ import wandb
 import numpy as np
 
 from itertools import count
+from multiprocessing import Pool
 from typing import Any, Dict, Optional
 
 from .optimizers import ExtraAdam
@@ -180,3 +181,90 @@ def run_vip(env,
                                   d_score_2=d_2,
                                   c_score_2=c_2)
 
+def run_vip_v2(env,
+               eval_env,
+               env_type,
+               obs, 
+               agent_1, 
+               agent_2,  
+               reward_window, 
+               device,
+               num_episodes,
+               actors_1,
+               actors_2,
+               envs,
+               evaluate_every=10,
+               evaluation_steps=10):
+
+    logger = WandbLogger(reward_window, env_type)
+    batch_size = agent_1.batch_size
+    steps_reset = agent_1.steps_reset
+
+    actors_and_envs = [(actors_1[i], actors_2[i], envs[i], steps_reset)
+                       for i in range(batch_size)]
+
+    import pdb; pdb.set_trace()
+
+    # For debugging
+    # compute_trajectory(actors_1[0], actors_2[0], envs[0], steps_reset)
+
+    for i_episode in range(num_episodes):
+        # Runs trajectories in parallel (cpu)
+        with Pool() as pool:
+            result = pool.starmap(compute_trajectory, actors_and_envs)
+        
+        agent_1.memory.states = [result[i][0] for i in range(batch_size)]
+        agent_1.memory.rewards = [result[i][1] for i in range(batch_size)]
+        agent_1.memory.logprobs = [result[i][2] for i in range(batch_size)]
+
+        agent_2.memory.states = [result[i][3] for i in range(batch_size)]
+        agent_2.memory.rewards = [result[i][4] for i in range(batch_size)]
+        agent_2.memory.logprobs = [result[i][5] for i in range(batch_size)]
+
+        agent_1.compute_surr_loss()
+
+        import pdb; pdb.set_trace()
+        
+            
+            
+def compute_trajectory(agent_1, agent_2, env, steps_reset):
+    states_1, rewards_1, logprobs_1= [], [], []
+    states_2, rewards_2, logprobs_2= [], [], []
+    
+    obs, _ = env.reset()
+    history_1 = get_reset_history("cg", "cpu", agent_1)
+    history_2 = get_reset_history("cg", "cpu", agent_2)
+
+    for j in range(steps_reset):
+        agent_1.transition = [obs, history_1, agent_1.history]
+        agent_2.transition = [obs, history_2, agent_2.history]
+        state_1 = torch.cat([obs.flatten(), history_1])
+        state_2 = torch.cat([obs.flatten(), history_2])
+
+        action_1, logprob_1 = agent_1.select_action(state_1, agent_2, None, state_2, "cpu")
+        action_2, logprob_2 = agent_2.select_action(state_2, agent_1, None, state_1, "cpu")
+
+        states_1.append(state_1.detach())
+        states_2.append(state_2.detach())
+        logprobs_1.append(logprob_1.detach())
+        logprobs_2.append(logprob_2.detach())
+
+        last_obs = obs
+        obs, r1, r2, _, _, _  = env.step([action_1, action_2])
+
+        rewards_1.append(r1.detach())
+        rewards_2.append(r2.detach())
+
+        agent_1.update_history(action_1, action_2, last_obs)
+        agent_2.update_history(action_2, action_1, last_obs)
+        history_1 = agent_1.aggregate_history()
+        history_2 = agent_2.aggregate_history()
+
+    return torch.stack(states_1), \
+           torch.stack(rewards_1), \
+           torch.stack(logprobs_1), \
+           torch.stack(states_2), \
+           torch.stack(rewards_2), \
+           torch.stack(logprobs_2)
+
+    

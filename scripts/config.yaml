@@ -4,19 +4,37 @@ hydra:
     dir: /network/scratch/j/juan.duque/hydra/
 
 seed: 1
-agent_type: "vip"
+agent_type: "vip_v2"
 reward_window: 10
 num_episodes: 1000000
 env: "cg"
 base_agent:
   gamma: 0.99
-  hidden_size: 64
+  hidden_size: 128
   num_layers: 0
   opt_type: "eg"
 vip_agent:
-  steps_reset: 10
-  num_rollouts: 10
-  rollout_len: 10
+  steps_reset: 20
+  num_rollouts: 20
+  rollout_len: 20
+  communication_len: 10
+  representation_size: 16
+  history_len: 2
+  collab_weight: 1
+  exploit_weight: 1
+  entropy_weight: 1
+vip_agent_v2:
+  batch_size: 32
+  steps_reset: 20
+  num_rollouts: 20
+  rollout_len: 20
+  communication_len: 10
+  representation_size: 16
+  history_len: 2
+  collab_weight: 1
+  exploit_weight: 1
+  entropy_weight: 1
+vip_actor_v2:
   communication_len: 10
   representation_size: 16
   history_len: 2
