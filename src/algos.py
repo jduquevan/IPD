@@ -24,12 +24,14 @@ def optimize_models(opt_type, opt_1, opt_2, loss_1, loss_2, t):
         loss_2 = -1 * loss_2 
         opt_1.zero_grad()
         opt_2.zero_grad()
-        loss_1.backward(retain_graph=True)
-        loss_2.backward()
         if t % 2 == 0:
+            loss_1.backward(retain_graph=True)
+            loss_2.backward(retain_graph=True)
             opt_1.extrapolation()
             opt_2.extrapolation()
         else:
+            loss_1.backward(retain_graph=True)
+            loss_2.backward()
             opt_1.step()
             opt_2.step()
 
@@ -194,42 +196,48 @@ def run_vip_v2(env,
                actors_2,
                envs,
                evaluate_every=10,
-               evaluation_steps=10):
+               evaluation_steps=10,
+               num_epochs=8):
 
     logger = WandbLogger(reward_window, env_type)
     batch_size = agent_1.batch_size
     steps_reset = agent_1.steps_reset
 
-    actors_and_envs = [(actors_1[i], actors_2[i], envs[i], steps_reset)
-                       for i in range(batch_size)]
-
-    import pdb; pdb.set_trace()
-
     # For debugging
     # compute_trajectory(actors_1[0], actors_2[0], envs[0], steps_reset)
 
     for i_episode in range(num_episodes):
+        actors_and_envs = [(actors_1[i], actors_2[i], envs[i], steps_reset)
+                       for i in range(batch_size)]
         # Runs trajectories in parallel (cpu)
         with Pool() as pool:
             result = pool.starmap(compute_trajectory, actors_and_envs)
         
-        agent_1.memory.states = [result[i][0] for i in range(batch_size)]
-        agent_1.memory.rewards = [result[i][1] for i in range(batch_size)]
-        agent_1.memory.logprobs = [result[i][2] for i in range(batch_size)]
+        set_memories(result, agent_1, agent_2, batch_size)
 
-        agent_2.memory.states = [result[i][3] for i in range(batch_size)]
-        agent_2.memory.rewards = [result[i][4] for i in range(batch_size)]
-        agent_2.memory.logprobs = [result[i][5] for i in range(batch_size)]
+        loss_1, reward_1 = agent_1.compute_surr_loss(agent_2)
+        loss_2, reward_2 = agent_2.compute_surr_loss(agent_1)
 
-        agent_1.compute_surr_loss()
+        logger.log_wandb_info_v2(reward_1, reward_2, loss_1, loss_2)
 
-        import pdb; pdb.set_trace()
+        optimize_models(agent_1.opt_type, 
+                        agent_1.optimizer, 
+                        agent_2.optimizer,
+                        loss_1,
+                        loss_2,
+                        i_episode)
+
+        if i_episode % 2 == 1:
+            for k in range(batch_size):
+                actors_1[k].set_weights(agent_1)
+                actors_2[k].set_weights(agent_2)
         
-            
-            
+        #TODO: Update environments
+        
 def compute_trajectory(agent_1, agent_2, env, steps_reset):
-    states_1, rewards_1, logprobs_1= [], [], []
-    states_2, rewards_2, logprobs_2= [], [], []
+    np.random.seed()
+    states_1, rewards_1, logprobs_1, dists_1, hists_1, indices_1 = [], [], [], [], [], []
+    states_2, rewards_2, logprobs_2, dists_2, hists_2, indices_2 = [], [], [], [], [], []
     
     obs, _ = env.reset()
     history_1 = get_reset_history("cg", "cpu", agent_1)
@@ -241,13 +249,29 @@ def compute_trajectory(agent_1, agent_2, env, steps_reset):
         state_1 = torch.cat([obs.flatten(), history_1])
         state_2 = torch.cat([obs.flatten(), history_2])
 
-        action_1, logprob_1 = agent_1.select_action(state_1, agent_2, None, state_2, "cpu")
-        action_2, logprob_2 = agent_2.select_action(state_2, agent_1, None, state_1, "cpu")
+        states_1.append(obs.flatten())
+        states_2.append(obs.flatten())
 
-        states_1.append(state_1.detach())
-        states_2.append(state_2.detach())
+        hists_1.append(torch.stack(agent_1.history))
+        hists_2.append(torch.stack(agent_2.history))
+
+        action_1, logprob_1, dist_1, index_1 = agent_1.select_action(state=state_1, 
+                                                                     agent=agent_2, 
+                                                                     dist_b=None, 
+                                                                     state_b=state_2, 
+                                                                     device="cpu")
+        action_2, logprob_2, dist_2, index_2 = agent_2.select_action(state=state_2, 
+                                                                     agent=agent_1, 
+                                                                     dist_b=None, 
+                                                                     state_b=state_1, 
+                                                                     device="cpu")
+
         logprobs_1.append(logprob_1.detach())
         logprobs_2.append(logprob_2.detach())
+        dists_1.append(dist_1.detach())
+        dists_2.append(dist_2.detach())
+        indices_1.append(index_1.detach())
+        indices_2.append(index_2.detach())
 
         last_obs = obs
         obs, r1, r2, _, _, _  = env.step([action_1, action_2])
@@ -263,8 +287,33 @@ def compute_trajectory(agent_1, agent_2, env, steps_reset):
     return torch.stack(states_1), \
            torch.stack(rewards_1), \
            torch.stack(logprobs_1), \
+           torch.stack(dists_1), \
+           torch.stack(hists_1), \
            torch.stack(states_2), \
            torch.stack(rewards_2), \
-           torch.stack(logprobs_2)
+           torch.stack(logprobs_2), \
+           torch.stack(dists_2), \
+           torch.stack(hists_2), \
+           torch.stack(indices_1), \
+           torch.stack(indices_2)
 
-    
+def set_memories(result, agent_1, agent_2, batch_size):
+    agent_1.memory.states = [result[i][0] for i in range(batch_size)]
+    agent_1.memory.rewards = [result[i][1] for i in range(batch_size)]
+    agent_1.memory.logprobs_a = [result[i][2] for i in range(batch_size)]
+    agent_1.memory.logprobs_b = [result[i][7] for i in range(batch_size)]
+    agent_1.memory.dists = [result[i][3] for i in range(batch_size)]
+    agent_1.memory.hists_a = [result[i][4] for i in range(batch_size)]
+    agent_1.memory.hists_b = [result[i][9] for i in range(batch_size)]
+    agent_1.memory.indices_a = [result[i][10] for i in range(batch_size)]
+    agent_1.memory.indices_b = [result[i][11] for i in range(batch_size)]
+
+    agent_2.memory.states = [result[i][5] for i in range(batch_size)]
+    agent_2.memory.rewards = [result[i][6] for i in range(batch_size)]
+    agent_2.memory.logprobs_a = [result[i][7] for i in range(batch_size)]
+    agent_2.memory.logprobs_b = [result[i][2] for i in range(batch_size)]
+    agent_2.memory.dists = [result[i][8] for i in range(batch_size)]
+    agent_2.memory.hists_a = [result[i][9] for i in range(batch_size)]
+    agent_2.memory.hists_b = [result[i][4] for i in range(batch_size)]
+    agent_2.memory.indices_a = [result[i][11] for i in range(batch_size)]
+    agent_2.memory.indices_b = [result[i][10] for i in range(batch_size)]

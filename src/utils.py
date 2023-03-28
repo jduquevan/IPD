@@ -77,4 +77,20 @@ class WandbLogger():
             wandb_info['adversity_2'] = adv_2
 
         wandb.log(wandb_info)
-        
+
+    def log_wandb_info_v2(self, 
+                        avg_1, 
+                        avg_2, 
+                        value_1, 
+                        value_2):
+        self.cum_steps = self.cum_steps + 1
+
+        wandb_info = {}
+        wandb_info['cum_steps'] = self.cum_steps
+        wandb_info['agent_1_avg_reward'] = avg_1
+        wandb_info['agent_2_avg_reward'] = avg_2
+        wandb_info['total_avg_reward'] = (avg_1 + avg_2)/2
+        wandb_info['loss_1'] = value_1
+        wandb_info['loss_2'] = value_2
+
+        wandb.log(wandb_info)

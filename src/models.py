@@ -11,17 +11,30 @@ from torch.distributions import Normal
 class RolloutBuffer:
     def __init__(self):
         self.states = []
-        self.logprobs = []
+        self.logprobs_a = []
+        self.logprobs_b = []
         self.rewards = []
+        self.dists = []
+        self.hists_a = []
+        self.hists_b = []
+        self.indices_a = []
+        self.indices_b = []
     
     def clear(self):
         del self.states[:]
-        del self.logprobs[:]
+        del self.logprobs_a[:]
+        del self.logprobs_b[:]
         del self.rewards[:]
+        del self.dists[:]
+        del self.hists_a[:]
+        del self.hists_b[:]
+        del self.indices_a[:]
+        del self.indices_b[:]
 
-class DRLActor(nn.Module):
+
+class VIPActor(nn.Module):
     def __init__(self, in_size, out_size, device, hidden_size=40, num_layers=1):
-        super(DRLActor, self).__init__()
+        super(VIPActor, self).__init__()
 
         self.in_size = in_size
         self.out_size = out_size
@@ -47,13 +60,13 @@ class DRLActor(nn.Module):
 
     def batch_forward(self, x, pi_b=None, h_0=None):
         if pi_b == None:
-            pi_b = -1 * torch.ones(self.out_size).to(self.device)
+            pi_b = -1 * torch.ones(x.shape[0], self.out_size).to(self.device)
         
-        x = torch.cat([x, pi_b])
+        x = torch.cat([x, pi_b], dim=1)
         if h_0 is not None:
-            output, x = self.gru(x.reshape(1, 1, x.shape[0]), h_0)
+            output, x = self.gru(x.reshape(x.shape[0], 1, x.shape[1]), h_0)
         else:
-            output, x = self.gru(x.reshape(1, 1, x.shape[0]))
+            output, x = self.gru(x.reshape(x.shape[0], 1, x.shape[1]))
         x = F.relu(self.hidden(x))
         return output, F.softmax(self.linear(x), dim=2)
 

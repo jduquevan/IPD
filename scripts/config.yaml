@@ -34,6 +34,7 @@ vip_agent_v2:
   collab_weight: 1
   exploit_weight: 1
   entropy_weight: 1
+  epsilon: 0.2
 vip_actor_v2:
   communication_len: 10
   representation_size: 16

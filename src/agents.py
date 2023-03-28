@@ -8,7 +8,7 @@ from functools import reduce
 
 from .algos import get_reset_history
 from .ipd import IPD
-from .models import DRLActor, HistoryAggregator, RolloutBuffer
+from .models import VIPActor, HistoryAggregator, RolloutBuffer
 from .optimizers import ExtraAdam
 
 class BaseAgent():
@@ -83,7 +83,7 @@ class VIPAgent(BaseAgent):
                                                     out_size=self.representation_size,
                                                     device=self.device,
                                                     hidden_size=self.hidden_size)
-        self.actor = DRLActor(in_size=self.obs_size + representation_size + n_actions,
+        self.actor = VIPActor(in_size=self.obs_size + representation_size + n_actions,
                               out_size=self.n_actions,
                               device=self.device,
                               hidden_size=self.hidden_size)
@@ -264,6 +264,7 @@ class VIPAgentV2(BaseAgent):
                  collab_weight,
                  exploit_weight,
                  entropy_weight,
+                 epsilon,
                  device,
                  n_actions,
                  history_size,
@@ -285,6 +286,7 @@ class VIPAgentV2(BaseAgent):
         self.exploit_weight = exploit_weight
         self.collab_weight = collab_weight
         self.entropy_weight = entropy_weight
+        self.epsilon = epsilon
         self.n_actions = n_actions
         self.history_size = history_size
         self.transition: list = list()
@@ -295,7 +297,7 @@ class VIPAgentV2(BaseAgent):
                                                     out_size=self.representation_size,
                                                     device=self.device,
                                                     hidden_size=self.hidden_size)
-        self.actor = DRLActor(in_size=self.obs_size + representation_size + n_actions,
+        self.actor = VIPActor(in_size=self.obs_size + representation_size + n_actions,
                               out_size=self.n_actions,
                               device=self.device,
                               hidden_size=self.hidden_size)
@@ -334,13 +336,8 @@ class VIPAgentV2(BaseAgent):
         self.history.append(act_obs)
         self.history = self.history[-self.history_len:]
 
-    def aggregate_history(self):
-        if self.history:
-            history_tensor = torch.cat(self.history).to(self.device).reshape((1, len(self.history), -1))
-            history = self.history_aggregator(history_tensor)
-        else:
-            history = -1 * torch.ones(self.representation_size).to(self.device)
-        return history.flatten()
+    def aggregate_history(self, history):
+        return self.history_aggregator(history)
 
     def select_action(self, state, agent, dist_b, state_b, device):
         self.steps_done += 1
@@ -353,19 +350,61 @@ class VIPAgentV2(BaseAgent):
         action = action.scatter(0, index, 1)
         return action
 
-    def unroll_policies(self, state, h_0, dist_a, agent, state_b=None):
-        j_0, dist_b = agent.actor(state, dist_a)
-        for i in range(self.communication_len):
-            h_0, dist_a = self.actor(state, dist_b, h_0)
-            if not state_b is None:
-                j_0, dist_b = agent.actor(state_b, dist_a, j_0)
-            else:
-                j_0, dist_b = agent.actor(state, dist_a, j_0)
-        return dist_a, dist_b
+    def unroll_policies(self, states, hists_a, hists_b, agent):
+        states = states.reshape(self.batch_size * self.rollout_len, self.obs_size)
+        hists_a = hists_a.reshape(self.batch_size * self.rollout_len, self.history_len, -1)
+        hists_b = hists_b.reshape(self.batch_size * self.rollout_len, self.history_len, -1)
+        state_reps_a = torch.cat([states, self.aggregate_history(hists_a)], dim=1)
+        state_reps_b = torch.cat([states, self.aggregate_history(hists_b)], dim=1)
 
-    def compute_surr_loss(self):
-        x = self.memory.states
-        import pdb; pdb.set_trace()
+        h_0, dists_a = self.actor.batch_forward(state_reps_a, None)
+        h_0 = h_0.reshape(1, self.batch_size * self.rollout_len, self.hidden_size)
+        dists_a = dists_a.reshape(self.batch_size * self.rollout_len, self.n_actions)
+        j_0, dists_b = self.actor.batch_forward(state_reps_a, dists_a)
+        j_0 = j_0.reshape(1, self.batch_size * self.rollout_len, self.hidden_size)
+        dists_b = dists_b.reshape(self.batch_size * self.rollout_len, self.n_actions)
+
+        for i in range(self.communication_len):
+            h_0, dists_a = self.actor.batch_forward(state_reps_a, dists_b, h_0)
+            h_0 = h_0.reshape(1, self.batch_size * self.rollout_len, self.hidden_size)
+            dists_a = dists_a.reshape(self.batch_size * self.rollout_len, self.n_actions)
+            j_0, dists_b = agent.actor.batch_forward(state_reps_b, dists_a, j_0)
+            j_0 = j_0.reshape(1, self.batch_size * self.rollout_len, self.hidden_size)
+            dists_b = dists_b.reshape(self.batch_size * self.rollout_len, self.n_actions)
+
+        return dists_a, dists_b
+
+    def compute_surr_loss(self, agent):
+        states = torch.stack(self.memory.states).to(self.device)
+        rewards = torch.stack(self.memory.rewards).to(self.device)
+        old_logprobs_a = torch.stack(self.memory.logprobs_a).to(self.device)
+        old_logprobs_b = torch.stack(self.memory.logprobs_b).to(self.device)
+        hists_a = torch.stack(self.memory.hists_a).to(self.device)
+        hists_b = torch.stack(self.memory.hists_b).to(self.device)
+        indices_a = torch.stack(self.memory.indices_a).to(self.device)
+        indices_b = torch.stack(self.memory.indices_b).to(self.device)
+        indices_a = indices_a.reshape(self.batch_size * self.rollout_len, 1)
+        indices_b = indices_b.reshape(self.batch_size * self.rollout_len, 1)
+
+        dists_a, dists_b = self.unroll_policies(states, hists_a, hists_b, agent)
+        logprobs_a = torch.log(torch.gather(dists_a, 1, indices_a))
+        logprobs_b = torch.log(torch.gather(dists_b, 1, indices_b))
+        logprobs_a = logprobs_a.reshape(self.batch_size, self.num_rollouts, 1)
+        logprobs_b = logprobs_b.reshape(self.batch_size, self.num_rollouts, 1)
+
+        # Estimate Q value explicitly
+        rewards = rewards.reshape(self.batch_size, self.rollout_len)
+        traj_rewards = torch.flip(torch.cumsum(torch.flip(rewards, dims=(1,)), dim=1), dims=(1,))
+
+        ratios = torch.exp(logprobs_a - old_logprobs_a.detach() + logprobs_b - old_logprobs_b.detach())
+        ratios = ratios.reshape(self.batch_size, self.num_rollouts)
+
+        surr_1 = ratios * traj_rewards
+        # PPO style trust region
+        surr_2 = torch.clamp(ratios, 1-self.epsilon, 1+self.epsilon) * traj_rewards
+
+
+        return torch.min(surr_1, surr_2).mean(), rewards.mean()
 
 class VIPActorV2(BaseAgent):
     def __init__(self,
@@ -395,7 +434,7 @@ class VIPActorV2(BaseAgent):
                                                     out_size=self.representation_size,
                                                     device=self.device,
                                                     hidden_size=self.hidden_size)
-        self.actor = DRLActor(in_size=self.obs_size + representation_size + n_actions,
+        self.actor = VIPActor(in_size=self.obs_size + representation_size + n_actions,
                               out_size=self.n_actions,
                               device=self.device,
                               hidden_size=self.hidden_size)
@@ -407,6 +446,8 @@ class VIPActorV2(BaseAgent):
 
     def reset_history(self):
         self.history = []
+        for i in range(self.history_len):
+            self.history.append(-1 * torch.ones(2 * self.n_actions + self.obs_size).to(self.device))
 
     def set_history(self, history):
         self.history = history
@@ -434,7 +475,7 @@ class VIPActorV2(BaseAgent):
         action = torch.zeros(self.n_actions).to(self.device)
         action = action.scatter(0, index, 1)
         log_prob = torch.log(torch.take(dist_a, index))
-        return action, log_prob
+        return action, log_prob, dist_a, index
 
     def unroll_policies(self, state, h_0, dist_a, agent, state_b=None):
         j_0, dist_b = agent.actor(state, dist_a)
@@ -446,6 +487,6 @@ class VIPActorV2(BaseAgent):
                 j_0, dist_b = agent.actor(state, dist_a, j_0)
         return dist_a, dist_b
 
-    def set_weights(agent):
+    def set_weights(self, agent):
         self.history_aggregator.load_state_dict(agent.history_aggregator.state_dict())
         self.actor.load_state_dict(agent.actor.state_dict())
