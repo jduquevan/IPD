@@ -36,6 +36,7 @@ eval "$(conda shell.bash hook)"
 conda activate cogames
 
 python -m src.run seed=${1} vip_agent_v2.steps_reset=${2} optim.lr=${3} \
-    vip_agent_v2.epsilon=${4}
+    vip_agent_v2.epsilon=${4} vip_agent_v2.entropy_weight=${5} vip_agent_v2.exploit_weight=${6} \
+    vip_agent_v2.collab_weight=${7}
 
 #python -m src.run seed=1 optim.lr=0.0005

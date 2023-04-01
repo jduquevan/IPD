@@ -393,18 +393,38 @@ class VIPAgentV2(BaseAgent):
         logprobs_b = logprobs_b.reshape(self.batch_size, self.num_rollouts, 1)
 
         # Estimate Q value explicitly
+        gammas = torch.tensor(self.gamma).repeat(self.batch_size, self.rollout_len - 1).to(self.device)
+        gammas = torch.exp(torch.cumsum(torch.log(gammas), dim=1))
+        gammas = torch.cat([torch.ones(self.batch_size, 1).to(self.device), gammas], dim=1)
+        
         rewards = rewards.reshape(self.batch_size, self.rollout_len)
         traj_rewards = torch.flip(torch.cumsum(torch.flip(rewards, dims=(1,)), dim=1), dims=(1,))
+        traj_rewards = gammas * traj_rewards
 
-        ratios = torch.exp(logprobs_a - old_logprobs_a.detach() + logprobs_b - old_logprobs_b.detach())
+        ratios = torch.exp(self.exploit_weight * logprobs_a - old_logprobs_a.detach() + 
+                           self.collab_weight * logprobs_b - old_logprobs_b.detach())
         ratios = ratios.reshape(self.batch_size, self.num_rollouts)
 
         surr_1 = ratios * traj_rewards
         # PPO style trust region
         surr_2 = torch.clamp(ratios, 1-self.epsilon, 1+self.epsilon) * traj_rewards
 
+        # Entropy computation
+        entropy_a = torch.bmm(torch.log(dists_a).reshape(-1, 1, self.n_actions),
+                              dists_a.reshape(-1, self.n_actions, 1))
+        entropy_b = torch.bmm(torch.log(dists_b).reshape(-1, 1, self.n_actions),
+                              dists_b.reshape(-1, self.n_actions, 1))
+        entropy = (entropy_a.reshape(self.batch_size *self.rollout_len) +
+                   entropy_b.reshape(self.batch_size *self.rollout_len))
 
-        return torch.min(surr_1, surr_2).mean(), rewards.mean()
+        loss = (torch.min(surr_1, surr_2).reshape(self.batch_size *self.rollout_len) + 
+                self.entropy_weight * entropy)
+
+        return loss.mean(), rewards.mean()
+
+    def set_weights(self, agent):
+        self.history_aggregator.load_state_dict(agent.history_aggregator.state_dict())
+        self.actor.load_state_dict(agent.actor.state_dict())
 
 class VIPActorV2(BaseAgent):
     def __init__(self,

@@ -118,6 +118,8 @@ def main(args: DictConfig):
             )
             envs.append(CoinGame(2, 1, "cpu"))
 
+        agent_2.set_weights(agent_1)
+
         run_vip_v2(env=env,
                    eval_env=eval_env,
                    env_type=env_type,
