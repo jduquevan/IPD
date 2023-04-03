@@ -95,21 +95,17 @@ class CoinGame(gym.Env):
             # A1 has coin 1
             if self.a_1==self.coin and self.curr_coin==COIN_1:
                 r1 = 1
-                self.j1 = torch.Tensor([0]).to(self.device)
             # A2 has coin 2
             if self.a_2==self.coin and self.curr_coin==COIN_2:
                 r2 = 1
-                self.j2 = torch.Tensor([1]).to(self.device)
             # A1 has coin 2
             if self.a_1==self.coin and self.curr_coin==COIN_2:
                 r1 = 1
                 r2 = r2 - 2
-                self.j2 = torch.Tensor([0]).to(self.device)
             # A2 has coin 1
             if self.a_2==self.coin and self.curr_coin==COIN_1:
                 r2 =  1
                 r1 = r1 - 2
-                self.j1 = torch.Tensor([1]).to(self.device)
 
         if self.a_1==self.coin and self.a_2==self.coin:
             self.grid[new_a_1_y, new_a_1_x] = BOTH_AND_COIN

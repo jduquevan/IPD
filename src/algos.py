@@ -105,6 +105,7 @@ def run_vip(env,
 
     logger = WandbLogger(reward_window, env_type)
     steps_reset = agent_1.steps_reset
+    exploit_weight = agent_1.exploit_weight
 
     for i_episode in range(num_episodes):
         obs, _ = env.reset()
@@ -180,7 +181,7 @@ def run_vip(env,
                                   c_score_1=c_1,
                                   d_score_2=d_2,
                                   c_score_2=c_2,
-                                  obs=obs)
+                                  obs=last_obs)
 
 def run_vip_v2(env,
                eval_env,
@@ -331,6 +332,7 @@ def run_vip_v3(env,
 
     logger = WandbLogger(reward_window, env_type)
     steps_reset = agent_1.steps_reset
+    exploit_weight = 2
 
     for i_episode in range(num_episodes):
         obs, _ = env.reset()
@@ -352,15 +354,15 @@ def run_vip_v3(env,
             action_2, history_2, dist_2 = agent_2.select_action(obs.flatten(), 
                                                                 dist_b=dists_2,
                                                                 h_0=history_2)
-            
+            last_obs=obs
             obs, r1, r2, _, _, _  = env.step([action_1, action_2])
 
             if t % 4 == 0 or t % 4 == 1:
                 value_1 = agent_1.compute_value(agent_2)
-                value_2 = agent_2.compute_value(agent_1, communication=False, agent_type=2)
-            else:
-                value_1 = agent_1.compute_value(agent_2, communication=False)
                 value_2 = agent_2.compute_value(agent_1, agent_type=2)
+            else:
+                value_1 = exploit_weight * agent_1.compute_value(agent_2, communication=False)
+                value_2 = exploit_weight * agent_2.compute_value(agent_1, communication=False, agent_type=2)
 
             optimize_models(agent_1.opt_type, 
                             agent_1.optimizer, 
@@ -370,6 +372,9 @@ def run_vip_v3(env,
                             t)
 
             d_1, c_1, d_2, c_2 = None, None, None, None
+
+            if t % 200 == 199:
+                agent_2.set_weights(agent_1)
 
             logger.log_wandb_info(action_1, 
                                   action_2, 
@@ -381,4 +386,4 @@ def run_vip_v3(env,
                                   c_score_1=c_1,
                                   d_score_2=d_2,
                                   c_score_2=c_2,
-                                  obs=obs)
+                                  obs=last_obs)

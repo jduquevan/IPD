@@ -88,6 +88,8 @@ class WandbLogger():
 
         self.adversity_1 = self.adversity_1[0:self.reward_window]
         self.adversity_2 = self.adversity_2[0:self.reward_window]
+        self.a_1_pickups = self.a_1_pickups[0:self.reward_window]
+        self.a_2_pickups = self.a_2_pickups[0:self.reward_window]
         self.easy_misses_1 = self.easy_misses_1[0:self.reward_window]
         self.easy_misses_2 = self.easy_misses_2[0:self.reward_window]
 
