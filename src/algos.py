@@ -179,7 +179,8 @@ def run_vip(env,
                                   d_score_1=d_1,
                                   c_score_1=c_1,
                                   d_score_2=d_2,
-                                  c_score_2=c_2)
+                                  c_score_2=c_2,
+                                  obs=obs)
 
 def run_vip_v2(env,
                eval_env,
@@ -357,13 +358,9 @@ def run_vip_v3(env,
             if t % 4 == 0 or t % 4 == 1:
                 value_1 = agent_1.compute_value(agent_2)
                 value_2 = agent_2.compute_value(agent_1, communication=False, agent_type=2)
-                value_1 = value_1 + agent_1.compute_value(agent_1)
-                value_2 = value_2 + agent_2.compute_value(agent_2, communication=False)
             else:
-                value_1 = agent_1.compute_value(agent_2, communication=False, agent_type=2)
-                value_2 = agent_2.compute_value(agent_1)
-                value_1 = value_1 + agent_1.compute_value(agent_1, communication=False)
-                value_2 = value_2 + agent_2.compute_value(agent_2)
+                value_1 = agent_1.compute_value(agent_2, communication=False)
+                value_2 = agent_2.compute_value(agent_1, agent_type=2)
 
             optimize_models(agent_1.opt_type, 
                             agent_1.optimizer, 
@@ -383,4 +380,5 @@ def run_vip_v3(env,
                                   d_score_1=d_1,
                                   c_score_1=c_1,
                                   d_score_2=d_2,
-                                  c_score_2=c_2)
+                                  c_score_2=c_2,
+                                  obs=obs)
