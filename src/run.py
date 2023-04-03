@@ -7,8 +7,8 @@ import numpy as np
 
 from omegaconf import DictConfig, OmegaConf
 
-from .agents import VIPAgent, VIPAgentV2, VIPActorV2
-from .algos import run_vip, run_vip_v2
+from .agents import VIPAgent, VIPAgentV2, VIPActorV2, VIPAgentV3
+from .algos import run_vip, run_vip_v2, run_vip_v3
 from .coin_game import CoinGame
 from .ipd import IPD
 
@@ -132,6 +132,34 @@ def main(args: DictConfig):
                    actors_1=actors_1,
                    actors_2=actors_2,
                    envs=envs)
+    elif config["agent_type"] == "vip_v3":
+        agent_1 = VIPAgentV3(config["base_agent"],
+                             config["optim"],
+                             **config["vip_agent"],
+                             device=device,
+                             n_actions=n_actions,
+                             obs_shape=obs.shape,
+                             model=model)
+
+        agent_2 = VIPAgentV3(config["base_agent"],
+                             config["optim"],
+                             **config["vip_agent"],
+                             device=device,
+                             n_actions=n_actions,
+                             obs_shape=obs.shape,
+                             model=model)
+
+        agent_2.set_weights(agent_1)
+
+        run_vip_v3(env=env,
+                   eval_env=eval_env,
+                   env_type=env_type,
+                   obs=obs, 
+                   agent_1=agent_1, 
+                   agent_2=agent_2,  
+                   reward_window=reward_window, 
+                   device=device,
+                   num_episodes=config["num_episodes"])
 
 if __name__ == "__main__":
     main()

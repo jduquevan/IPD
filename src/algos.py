@@ -24,14 +24,12 @@ def optimize_models(opt_type, opt_1, opt_2, loss_1, loss_2, t):
         loss_2 = -1 * loss_2 
         opt_1.zero_grad()
         opt_2.zero_grad()
+        loss_1.backward(retain_graph=True)
+        loss_2.backward(retain_graph=True)
         if t % 2 == 0:
-            loss_1.backward(retain_graph=True)
-            loss_2.backward(retain_graph=True)
             opt_1.extrapolation()
             opt_2.extrapolation()
         else:
-            loss_1.backward(retain_graph=True)
-            loss_2.backward()
             opt_1.step()
             opt_2.step()
 
@@ -151,10 +149,10 @@ def run_vip(env,
 
             if t % 4 == 0 or t % 4 == 1:
                 value_1 = agent_1.compute_value(agent_2, env_type=env_type)
-                value_2 = agent_2.compute_value(agent_1, env_type=env_type)
+                value_2 = agent_2.compute_value(agent_1, env_type=env_type, agent_t=2)
             else:
                 value_1 = agent_1.compute_value(agent_2, env_type=env_type, communication=False)
-                value_2 = agent_2.compute_value(agent_1, env_type=env_type, communication=False)
+                value_2 = agent_2.compute_value(agent_1, env_type=env_type, communication=False, agent_t=2)
 
             optimize_models(agent_1.opt_type, 
                             agent_1.optimizer, 
@@ -317,3 +315,72 @@ def set_memories(result, agent_1, agent_2, batch_size):
     agent_2.memory.hists_b = [result[i][4] for i in range(batch_size)]
     agent_2.memory.indices_a = [result[i][11] for i in range(batch_size)]
     agent_2.memory.indices_b = [result[i][10] for i in range(batch_size)]
+
+def run_vip_v3(env,
+               eval_env,
+               env_type,
+               obs, 
+               agent_1, 
+               agent_2,  
+               reward_window, 
+               device,
+               num_episodes,
+               evaluate_every=10,
+               evaluation_steps=10):
+
+    logger = WandbLogger(reward_window, env_type)
+    steps_reset = agent_1.steps_reset
+
+    for i_episode in range(num_episodes):
+        obs, _ = env.reset()
+        
+        for t in count():
+            if t % steps_reset == 0:
+                history_1 = None
+                history_2 = None
+                action_1, dist_1 = agent_1.get_empty_action()
+                action_2, dist_2 = agent_2.get_empty_action()
+
+            agent_1.transition = [obs, history_1, history_2, action_1, dist_1, action_2, dist_2]
+            agent_2.transition = [obs, history_2, history_1, action_2, dist_2, action_1, dist_1]
+            dists_1 = torch.cat([action_2, dist_2])
+            dists_2 = torch.cat([action_1, dist_1])
+            action_1, history_1, dist_1 = agent_1.select_action(obs.flatten(), 
+                                                                dist_b=dists_1, 
+                                                                h_0=history_1)
+            action_2, history_2, dist_2 = agent_2.select_action(obs.flatten(), 
+                                                                dist_b=dists_2,
+                                                                h_0=history_2)
+            
+            obs, r1, r2, _, _, _  = env.step([action_1, action_2])
+
+            if t % 4 == 0 or t % 4 == 1:
+                value_1 = agent_1.compute_value(agent_2)
+                value_2 = agent_2.compute_value(agent_1, communication=False, agent_type=2)
+                value_1 = value_1 + agent_1.compute_value(agent_1)
+                value_2 = value_2 + agent_2.compute_value(agent_2, communication=False)
+            else:
+                value_1 = agent_1.compute_value(agent_2, communication=False, agent_type=2)
+                value_2 = agent_2.compute_value(agent_1)
+                value_1 = value_1 + agent_1.compute_value(agent_1, communication=False)
+                value_2 = value_2 + agent_2.compute_value(agent_2)
+
+            optimize_models(agent_1.opt_type, 
+                            agent_1.optimizer, 
+                            agent_2.optimizer,
+                            value_1,
+                            value_2,
+                            t)
+
+            d_1, c_1, d_2, c_2 = None, None, None, None
+
+            logger.log_wandb_info(action_1, 
+                                  action_2, 
+                                  r1, 
+                                  r2, 
+                                  value_1, 
+                                  value_2,
+                                  d_score_1=d_1,
+                                  c_score_1=c_1,
+                                  d_score_2=d_2,
+                                  c_score_2=c_2)

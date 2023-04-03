@@ -154,7 +154,7 @@ class VIPAgent(BaseAgent):
                 j_0, dist_b = agent.actor(state, dist_a, j_0)
         return dist_a, dist_b
 
-    def compute_value(self, agent, env_type="ipd", communication=True):
+    def compute_value(self, agent, env_type="ipd", communication=True, agent_t=1):
 
         self.cum_steps = self.cum_steps + 1
         estimated_rewards = []
@@ -224,7 +224,10 @@ class VIPAgent(BaseAgent):
 
 
                 last_obs = obs
-                obs, r1, r2, _, _, _  = self.model.step([action_a, action_b])
+                if agent_t == 1:
+                    obs, r1, r2, _, _, _  = self.model.step([action_a, action_b])
+                else:
+                    obs, r1, r2, _, _, _  = self.model.step([action_b, action_a])
                 if env_type == "ipd":
                     history = torch.cat([action_a, action_b])
                 elif env_type == "cg":
@@ -232,8 +235,10 @@ class VIPAgent(BaseAgent):
                     agent.update_history(action_b, action_a, last_obs)
                     history_a = self.aggregate_history()
                     history_b = agent.aggregate_history()
-
-                t_rewards.append(r1)
+                if agent_t == 1:
+                    t_rewards.append(r1)
+                else:
+                    t_rewards.append(r2)
                 steps = steps + 1
 
             reward_t = torch.sum(torch.cat(t_rewards, dim=0))
@@ -509,4 +514,149 @@ class VIPActorV2(BaseAgent):
 
     def set_weights(self, agent):
         self.history_aggregator.load_state_dict(agent.history_aggregator.state_dict())
+        self.actor.load_state_dict(agent.actor.state_dict())
+
+class VIPAgentV3(BaseAgent):
+    def __init__(self,
+                 config,
+                 optim_config,
+                 steps_reset,
+                 num_rollouts,
+                 rollout_len,
+                 communication_len,
+                 representation_size,
+                 history_len,
+                 collab_weight,
+                 exploit_weight,
+                 entropy_weight,
+                 device,
+                 n_actions,
+                 obs_shape,
+                 model):
+        BaseAgent.__init__(self,
+                           **config, 
+                           device=device,
+                           n_actions=n_actions,
+                           obs_shape=obs_shape)
+        self.cum_steps = 0
+        self.steps_reset = steps_reset
+        self.num_rollouts = num_rollouts
+        self.rollout_len = rollout_len
+        self.communication_len = communication_len
+        self.representation_size =representation_size
+        self.history_len = history_len
+        self.exploit_weight = exploit_weight
+        self.collab_weight = collab_weight
+        self.entropy_weight = entropy_weight
+        self.n_actions = n_actions
+        self.transition: list = list()
+        self.history = []
+
+        self.actor = VIPActor(in_size=self.obs_size + 2 * n_actions,
+                              out_size=self.n_actions,
+                              device=self.device,
+                              hidden_size=self.hidden_size)
+        self.actor.to(self.device)
+        self.model = model
+
+        if self.opt_type.lower() == "sgd":
+            self.optimizer = optim.SGD(list(self.actor.parameters()), 
+                                       lr=optim_config["lr"],
+                                       momentum=optim_config["momentum"],
+                                       weight_decay=optim_config["weight_decay"],
+                                       maximize=True)
+        elif self.opt_type.lower() == "adam":
+            self.optimizer = optim.Adam(list(self.actor.parameters()), 
+                                        lr=optim_config["lr"],
+                                        weight_decay=optim_config["weight_decay"],
+                                        maximize=True)
+        elif self.opt_type.lower() == "eg":
+            self.optimizer = ExtraAdam(list(self.actor.parameters()),
+                                       lr=optim_config["lr"],
+                                       betas=(optim_config["beta_1"], optim_config["beta_2"]),
+                                       weight_decay=optim_config["weight_decay"])
+    
+    def reset_history(self):
+        self.history = None
+
+    def set_history(self, history):
+        self.history = history
+
+    def get_empty_action(self):
+        act = -1 * torch.ones(self.n_actions).to(self.device)
+        dist = -1 * torch.ones(self.n_actions).to(self.device)
+        return act, dist
+
+    def select_action(self, state, dist_b=None, h_0=None):
+        self.steps_done += 1
+        h_1, dist_a = self.actor(state, dist_b, h_0)
+        index = torch.tensor([np.random.choice(self.n_actions, p=dist_a.cpu().detach().numpy())],
+                              requires_grad=False,
+                              device=self.device)
+        action = torch.zeros(self.n_actions).to(self.device)
+        action = action.scatter(0, index, 1)
+        return action, h_1, dist_a
+
+    def compute_value(self, agent, communication=True, agent_type=1):
+        estimated_rewards = []
+        counts = []
+
+        # Monte-carlo rollouts TODO: Implement parallel rollouts
+        for i in range(self.num_rollouts):
+            steps = self.cum_steps
+            t_rewards = []
+            log_probs = []
+            obs, history_a, history_b, action_a, dist_a, action_b, dist_b = self.transition
+            l = np.random.geometric(p=1/self.rollout_len, size=1)
+
+            for j in range(min(l[0], 2*self.rollout_len)):
+                
+                if steps % self.steps_reset == 0:
+                    history_a = None
+                    history_b = None
+                    action_a, dist_a = self.get_empty_action()
+                    action_b, dist_b = agent.get_empty_action()
+
+                dists_a = torch.cat([action_b, dist_b])
+                dists_b = torch.cat([action_a, dist_a])
+
+                action_a, history_a, dist_a = self.select_action(obs.flatten(), 
+                                                                 dist_b=dists_a,
+                                                                 h_0=history_a)
+                action_b, history_b, dist_b = agent.select_action(obs.flatten(), 
+                                                                  dist_b=dists_b,
+                                                                  h_0=history_b)
+
+                a_t_prob = torch.take(dist_a, torch.argmax(action_a, dim=0))
+                b_t_prob = torch.take(dist_b, torch.argmax(action_b, dim=0))
+                
+                if not communication:
+                    b_t_prob = b_t_prob.detach()
+
+                entropy = self.entropy_weight * torch.dot(dist_a, torch.log(dist_a))
+                log_probs.append(entropy.reshape(1))
+                log_probs.append(self.exploit_weight * torch.log(a_t_prob).reshape(1))
+                log_probs.append(self.collab_weight *torch.log(b_t_prob).reshape(1))
+
+                if agent_type==1:
+                    obs, r1, r2, _, _, _  = self.model.step([action_a, action_b])
+                    t_rewards.append(r1)
+                elif agent_type==2:
+                    obs, r1, r2, _, _, _  = self.model.step([action_b, action_a])
+                    t_rewards.append(r2)
+
+                steps = steps + 1
+
+            reward_t = torch.sum(torch.cat(t_rewards, dim=0))
+            sum_log_probs = torch.sum(torch.cat(log_probs, dim=0))
+
+            # Reinforce estimator
+            estimated_rewards.append((reward_t.detach() * sum_log_probs).unsqueeze(dim=0))
+
+        self.cum_steps = self.cum_steps + 1
+        game_value = torch.sum(torch.cat(estimated_rewards, dim=0))/self.num_rollouts
+
+        return game_value
+
+    def set_weights(self, agent):
         self.actor.load_state_dict(agent.actor.state_dict())
